@@ -1,17 +1,18 @@
 module
 
 public import Veir.Pass
-public import Veir.Interfaces.RegionKindInterfaces
-import Veir.Rewriter.LinkedList
+import Veir.Rewriter.EraseBlocks
 
 /-!
   # A minimal CFG simplification pass
 
   For now this pass only removes blocks that are unreachable from their
-  region's entry block, in SSACFG regions.
+  region's entry block, recursively beneath the pass's root operation.
 
-  A region is left alone when any of its unreachable blocks contains an
-  operation with regions, since we don't yet have a way to erase regions.
+  Like MLIR, every multiblock region is treated as a CFG, including regions of
+  unregistered operations. Single-block regions only need recursive traversal.
+  All dead blocks are collected before deletion so that uses in independently
+  unreachable nested blocks can be removed together with their definitions.
 -/
 
 namespace Veir
@@ -50,58 +51,38 @@ def reachableFrom (ctx : IRContext OpCode) (entry : BlockPtr) : Std.HashSet Bloc
         worklist := worklist.push succ
   return seen
 
-/-- Erase `dead`, a set of blocks of `region` that does not contain the
-    entry block, where nothing outside `dead` refers to these blocks or to
-    any value defined in them, and no operation in them has regions.
+/-- Collect the roots of dead block trees beneath `root`. Regions inside live
+    blocks are analyzed independently; everything inside a dead block will be
+    erased with that block, regardless of its local reachability. -/
+def collectUnreachableBlocks (ctx : IRContext OpCode) (root : OperationPtr) :
+    Array BlockPtr := Id.run do
+  let mut dead := #[]
+  let mut worklist := root.getRegions! ctx
+  while !worklist.isEmpty do
+    let region := worklist.back!
+    worklist := worklist.pop
+    let blocks := regionBlocks ctx region
+    let some entry := blocks[0]? | continue
+    let live := if blocks.size == 1 then {entry} else reachableFrom ctx entry
+    for block in blocks do
+      if live.contains block then
+        for op in blockOps ctx block do
+          worklist := worklist ++ op.getRegions! ctx
+      else
+        dead := dead.push block
+  return dead
 
-    First every operation in `dead` drops its operands and successors, so
-    that no use lists mention them any more; after that the operations and
-    blocks can be deallocated without regard to order, even when the dead
-    blocks refer to each other.
-
-    TODO: this belongs in the rewriter once we prove it preserves
-    well-formedness. -/
-def eraseBlocks (ctx : IRContext OpCode) (region : RegionPtr) (dead : Array BlockPtr) :
-    IRContext OpCode := Id.run do
-  let ops := dead.flatMap (blockOps ctx)
-  let mut ctx := ctx
-  for op in ops do
-    for i in [0:op.getNumOperands! ctx] do
-      ctx := (op.getOpOperand i).removeFromCurrent! ctx
-    for i in [0:op.getNumSuccessors! ctx] do
-      ctx := (op.getBlockOperand i).removeFromCurrent! ctx
-  for op in ops do
-    ctx := { ctx with operations := ctx.operations.erase op }
-  for block in dead do
-    let { prev, next, .. } := block.get! ctx
-    -- The entry block is never dead, so every dead block has a predecessor.
-    ctx := prev.get!.setNextBlock! ctx next
-    ctx := match next with
-      | some next => next.setPrevBlock! ctx prev
-      | none => region.setLastBlock! ctx prev
-    ctx := { ctx with blocks := ctx.blocks.erase block }
-  return ctx
-
-set_option warn.sorry false in
-/-- Remove the unreachable blocks of `region`, if it is an SSACFG region. -/
-def simplifyRegion (ctx : WfIRContext OpCode) (region : RegionPtr) :
-    WfIRContext OpCode := Id.run do
-  if region.getRegionKind ctx != .SSACFG then return ctx
-  let blocks := regionBlocks ctx.raw region
-  let some entry := blocks[0]? | return ctx
-  let live := reachableFrom ctx.raw entry
-  let dead := blocks.filter (!live.contains ·)
-  if dead.isEmpty then return ctx
-  if dead.any (fun block => (blockOps ctx.raw block).any (·.getNumRegions! ctx.raw > 0)) then
-    return ctx
-  return ⟨eraseBlocks ctx.raw region dead, sorry⟩
-
-def run (ctx : WfIRContext OpCode) : WfIRContext OpCode :=
-  ctx.raw.regions.keys.foldl simplifyRegion ctx
+def run (ctx : WfIRContext OpCode) (root : OperationPtr) :
+    Except String (WfIRContext OpCode) := do
+  unless ctx.raw.operations.contains root do
+    throw "simplify-cfg: root operation is out of bounds"
+  WfRewriter.eraseBlockTrees ctx (collectUnreachableBlocks ctx.raw root)
 
 def SimplifyCFGPass.impl (ctx : WfIRContext OpCode) (op : OperationPtr) (_ : op.InBounds ctx.raw) :
     ExceptT String IO (WfIRContext OpCode) := do
-  pure (SimplifyCFG.run ctx)
+  match SimplifyCFG.run ctx op with
+  | .ok ctx => pure ctx
+  | .error message => throw message
 
 end SimplifyCFG
 
