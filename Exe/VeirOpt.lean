@@ -64,7 +64,7 @@ def availablePasses : Std.HashMap String (Pass OpCode) :=
 -/
 def passGroups : Std.HashMap String String :=
   (Std.HashMap.emptyWithCapacity 2)
-    |>.insert "O" "simplify-cfg,canonicalize,instcombine,cse,dce"
+    |>.insert "O" "canonicalize,simplify-cfg,instcombine,cse,dce"
     |>.insert "mod-arith"
         "mod-arith-to-arith{barrett},cse,coerce-mod-arith-function-boundaries,reconcile-cast,canonicalize,cse,dce"
     |>.insert "mod-arith-pow2-width"
