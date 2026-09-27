@@ -59,11 +59,11 @@ private def checkValueUsers (ctx : IRContext OpInfo) (dead : BlockErasure)
 private def checkBlockTreeUsers (ctx : IRContext OpInfo) (dead : BlockErasure) :
     Except String Unit := do
   for op in dead.operations.toArray do
-    for i in [0:op.getNumResults! ctx] do
-      checkValueUsers ctx dead (.opResult (op.getResult i)) "an operation result"
+    for result in op.getResults! ctx do
+      checkValueUsers ctx dead result "an operation result"
   for block in dead.blocks.toArray do
-    for i in [0:block.getNumArguments! ctx] do
-      checkValueUsers ctx dead (.blockArgument (block.getArgument i)) "a block argument"
+    for arg in block.getArguments! ctx do
+      checkValueUsers ctx dead arg "a block argument"
     let mut current := (block.get! ctx).firstUse
     while let some use := current do
       unless dead.operations.contains use.op do
