@@ -18,26 +18,6 @@ import Veir.Rewriter.EraseBlocks
 namespace Veir
 namespace SimplifyCFG
 
-/-- The blocks of `region` in list order, so the entry block (if any) comes first. -/
-def regionBlocks (ctx : IRContext OpCode) (region : RegionPtr) : Array BlockPtr := Id.run do
-  let mut blocks := #[]
-  let mut cur := (region.get! ctx).firstBlock
-  while h : cur.isSome do
-    let block := cur.get h
-    blocks := blocks.push block
-    cur := (block.get! ctx).next
-  return blocks
-
-/-- The operations of `block`. -/
-def blockOps (ctx : IRContext OpCode) (block : BlockPtr) : Array OperationPtr := Id.run do
-  let mut ops := #[]
-  let mut cur := (block.get! ctx).firstOp
-  while h : cur.isSome do
-    let op := cur.get h
-    ops := ops.push op
-    cur := (op.get! ctx).next
-  return ops
-
 /-- The blocks reachable from `entry` along successor edges. -/
 def reachableFrom (ctx : IRContext OpCode) (entry : BlockPtr) : Std.HashSet BlockPtr := Id.run do
   let mut seen : Std.HashSet BlockPtr := {entry}
@@ -61,12 +41,12 @@ def collectUnreachableBlocks (ctx : IRContext OpCode) (root : OperationPtr) :
   while !worklist.isEmpty do
     let region := worklist.back!
     worklist := worklist.pop
-    let blocks := regionBlocks ctx region
+    let blocks := region.getBlocks! ctx
     let some entry := blocks[0]? | continue
     let live := if blocks.size == 1 then {entry} else reachableFrom ctx entry
     for block in blocks do
       if live.contains block then
-        for op in blockOps ctx block do
+        for op in block.getOps! ctx do
           worklist := worklist ++ op.getRegions! ctx
       else
         dead := dead.push block

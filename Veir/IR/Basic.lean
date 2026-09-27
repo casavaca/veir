@@ -2743,6 +2743,24 @@ def BlockPtr.getSuccessors! (block : BlockPtr) (ctx : IRContext OpInfo) : Array 
   | none => #[]
   | some term => term.getSuccessors! ctx
 
+/-- The blocks of `region` in list order, so the entry block (if any) comes first. -/
+def RegionPtr.getBlocks! (region : RegionPtr) (ctx : IRContext OpInfo) : Array BlockPtr := Id.run do
+  let mut blocks := #[]
+  let mut current := (region.get! ctx).firstBlock
+  while let some block := current do
+    blocks := blocks.push block
+    current := (block.get! ctx).next
+  return blocks
+
+/-- The operations of `block` in list order. -/
+def BlockPtr.getOps! (block : BlockPtr) (ctx : IRContext OpInfo) : Array OperationPtr := Id.run do
+  let mut ops := #[]
+  let mut current := (block.get! ctx).firstOp
+  while let some op := current do
+    ops := ops.push op
+    current := (op.get! ctx).next
+  return ops
+
 def IRContext.empty (OpInfo : Type) [IsOpCode OpInfo] : IRContext OpInfo := {
     nextID := 0,
     operations := Std.HashMap.emptyWithCapacity,

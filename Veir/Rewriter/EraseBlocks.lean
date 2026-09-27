@@ -33,16 +33,11 @@ private def collectBlockTrees (ctx : IRContext OpInfo) (roots : Array BlockPtr) 
       throw "cannot erase blocks: a requested block is out of bounds"
     if dead.blocks.contains block then continue
     dead := { dead with blocks := dead.blocks.insert block }
-    let mut currentOp := (block.get! ctx).firstOp
-    while let some op := currentOp do
+    for op in block.getOps! ctx do
       dead := { dead with operations := dead.operations.insert op }
       for region in op.getRegions! ctx do
         dead := { dead with regions := dead.regions.insert region }
-        let mut currentBlock := (region.get! ctx).firstBlock
-        while let some child := currentBlock do
-          worklist := worklist.push child
-          currentBlock := (child.get! ctx).next
-      currentOp := (op.get! ctx).next
+        worklist := worklist ++ region.getBlocks! ctx
   return dead
 
 /-- Every use of a deleted value must itself be deleted. -/

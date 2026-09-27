@@ -36,7 +36,7 @@ private def uses := parse r#"
 "#
 
 private def useBlocks : Array BlockPtr :=
-  SimplifyCFG.regionBlocks uses.2.raw (uses.1.getRegion! uses.2.raw 0)
+  (uses.1.getRegion! uses.2.raw 0).getBlocks! uses.2.raw
 
 private def rejects (block : BlockPtr) (expected : String) : Bool :=
   match WfRewriter.eraseBlockTrees uses.2 #[block] with

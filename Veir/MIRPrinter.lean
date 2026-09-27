@@ -86,20 +86,6 @@ partial def lastOp (ctx : IRContext OpCode) (op : OperationPtr) : OperationPtr :
   | some n => lastOp ctx n
   | none => op
 
-/-- Blocks of a region, in order. -/
-partial def collectBlocks (ctx : IRContext OpCode) (b : Option BlockPtr)
-    (acc : Array BlockPtr := #[]) : Array BlockPtr :=
-  match b with
-  | none => acc
-  | some bp => collectBlocks ctx (bp.get! ctx).next (acc.push bp)
-
-/-- Operations of a block, in order. -/
-partial def collectOps (ctx : IRContext OpCode) (op : Option OperationPtr)
-    (acc : Array OperationPtr := #[]) : Array OperationPtr :=
-  match op with
-  | none => acc
-  | some o => collectOps ctx (o.get! ctx).next (acc.push o)
-
 /-- The `(size, alignment)` in bytes of a `riscv_stack.alloca`, if `op` is one. -/
 def allocaShape? (ctx : IRContext OpCode) (op : OperationPtr) : Option (Int × Int) :=
   let opType := op.getOpType! ctx
@@ -146,7 +132,7 @@ def planFrame (ctx : IRContext OpCode) (blocks : Array BlockPtr) : Frame := Id.r
   let mut objects : Array (Int × Int) := #[]
   let mut escaped : List Nat := []
   for b in blocks do
-    for op in collectOps ctx (b.get! ctx).firstOp do
+    for op in b.getOps! ctx do
       match allocaShape? ctx op with
       | some shape =>
         fi := fi.insert op.id objects.size
@@ -509,7 +495,7 @@ def emitTrampoline (t : Nat) (s : Nat) : IO Unit := do
 
 /-- Print a full MIR module for the given `main` function. -/
 def printMIR (ctx : IRContext OpCode) (funcOp : OperationPtr) : IO Unit := do
-  let allBlocks := collectBlocks ctx (FunctionOpInterface.getEntryBlock? funcOp ctx)
+  let allBlocks := (FunctionOpInterface.getFunctionBody! funcOp ctx).getBlocks! ctx
   -- Drop blocks unreachable from the entry: a real codegen prunes them, and
   -- they break MIR liveness (their values aren't dominated by any real path).
   let reach :=
