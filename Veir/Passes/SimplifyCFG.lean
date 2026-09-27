@@ -18,7 +18,7 @@ import Veir.Rewriter.EraseBlocks
 namespace Veir
 namespace SimplifyCFG
 
-/-- The blocks of `region`, in order. -/
+/-- The blocks of `region` in list order, so the entry block (if any) comes first. -/
 def regionBlocks (ctx : IRContext OpCode) (region : RegionPtr) : Array BlockPtr := Id.run do
   let mut blocks := #[]
   let mut cur := (region.get! ctx).firstBlock
@@ -28,7 +28,7 @@ def regionBlocks (ctx : IRContext OpCode) (region : RegionPtr) : Array BlockPtr 
     cur := (block.get! ctx).next
   return blocks
 
-/-- The operations of `block`, in order. -/
+/-- The operations of `block`. -/
 def blockOps (ctx : IRContext OpCode) (block : BlockPtr) : Array OperationPtr := Id.run do
   let mut ops := #[]
   let mut cur := (block.get! ctx).firstOp
