@@ -588,6 +588,129 @@ def translate_intrinsic(
     return None
 
 
+MEMORY_OPS = {"llvm.alloca", "llvm.getelementptr", "llvm.load", "llvm.store"}
+
+# Marker in `rawConstantIndices` for an index taken from the next SSA operand.
+GEP_DYNAMIC_INDEX = -2147483648
+
+
+def check_memory_attrs(op: Operation, allowed: set[str]) -> None:
+    unsupported = parse_attr_items(op.attr) - allowed
+    if unsupported:
+        raise Error(f"unsupported attributes on {op.name}: {', '.join(sorted(unsupported))}")
+
+
+def parse_elem_type(attr: str, op_desc: str) -> str:
+    m = re.search(r'"?elem_type"?\s*=\s*([^,\s>}]+)', attr)
+    if not m:
+        raise Error(f"{op_desc} is missing elem_type")
+    return convert_type(m.group(1))
+
+
+def align_suffix(attr: str) -> str:
+    """`, align N` for a nonzero `alignment` attribute; 0 or absent means none."""
+    if "alignment" not in parse_attr_items(attr):
+        return ""
+    align = parse_int_attr(attr, "alignment")
+    return f", align {align}" if align else ""
+
+
+def volatile_prefix(attr: str) -> str:
+    return "volatile " if "volatile_" in parse_attr_items(attr) else ""
+
+
+def gep_flags(attr: str) -> str:
+    if "noWrapFlags" not in parse_attr_items(attr):
+        return ""
+    bits = parse_int_attr(attr, "noWrapFlags")
+    if bits & ~7:
+        raise Error(f"unsupported noWrapFlags value on llvm.getelementptr: {bits}")
+    flags = []
+    # `inbounds` implies `nusw`; MLIR sets both bits for it.
+    if bits & 1:
+        flags.append("inbounds")
+    elif bits & 2:
+        flags.append("nusw")
+    if bits & 4:
+        flags.append("nuw")
+    return "".join(f" {f}" for f in flags)
+
+
+def parse_raw_constant_indices(attr: str) -> list[int]:
+    m = re.search(r'"?rawConstantIndices"?\s*=\s*array<i32\s*(?::([^>]*))?>', attr)
+    if not m:
+        raise Error("llvm.getelementptr is missing rawConstantIndices")
+    if m.group(1) is None or not m.group(1).strip():
+        return []
+    return [int(x) for x in m.group(1).split(",")]
+
+
+def translate_memory(op: Operation, aliases: dict[str, str], value_types: dict[str, str]) -> list[str]:
+    name = op.name
+    if name == "llvm.store":
+        check_memory_attrs(op, {"alignment", "volatile_"})
+        if op.result is not None or op.result_types:
+            raise Error("llvm.store cannot have results")
+        require_operands(op, 2)
+        if convert_type(op.operand_types[1]) != "ptr":
+            raise Error("llvm.store address must be a pointer")
+        volatile = volatile_prefix(op.attr)
+        typ = convert_type(op.operand_types[0])
+        val = llvm_value(op.operands[0], aliases)
+        ptr = llvm_value(op.operands[1], aliases)
+        return [f"  store {volatile}{typ} {val}, ptr {ptr}{align_suffix(op.attr)}"]
+
+    result = require_result(op)
+    out_result = llvm_ssa_name(result)
+    dst_type = op.result_types[0]
+    value_types[result] = dst_type
+
+    if name == "llvm.load":
+        check_memory_attrs(op, {"alignment", "volatile_"})
+        require_operands(op, 1)
+        if convert_type(op.operand_types[0]) != "ptr":
+            raise Error("llvm.load address must be a pointer")
+        volatile = volatile_prefix(op.attr)
+        typ = convert_type(dst_type)
+        ptr = llvm_value(op.operands[0], aliases)
+        return [f"  {out_result} = load {volatile}{typ}, ptr {ptr}{align_suffix(op.attr)}"]
+
+    if name == "llvm.alloca":
+        check_memory_attrs(op, {"alignment", "elem_type"})
+        require_operands(op, 1)
+        if convert_type(dst_type) != "ptr":
+            raise Error("llvm.alloca must produce a pointer")
+        elem = parse_elem_type(op.attr, name)
+        count_type = convert_type(op.operand_types[0])
+        count = llvm_value(op.operands[0], aliases)
+        return [f"  {out_result} = alloca {elem}, {count_type} {count}{align_suffix(op.attr)}"]
+
+    if name == "llvm.getelementptr":
+        check_memory_attrs(op, {"elem_type", "rawConstantIndices", "noWrapFlags"})
+        if not op.operands or len(op.operands) != len(op.operand_types):
+            raise Error("llvm.getelementptr expects a base pointer operand")
+        if convert_type(op.operand_types[0]) != "ptr" or convert_type(dst_type) != "ptr":
+            raise Error("llvm.getelementptr base and result must be pointers")
+        elem = parse_elem_type(op.attr, name)
+        base = llvm_value(op.operands[0], aliases)
+        dynamic = list(zip(op.operands[1:], op.operand_types[1:]))
+        indices: list[str] = []
+        for raw in parse_raw_constant_indices(op.attr):
+            if raw == GEP_DYNAMIC_INDEX:
+                if not dynamic:
+                    raise Error("llvm.getelementptr has too few dynamic index operands")
+                idx, idx_type = dynamic.pop(0)
+                indices.append(f"{convert_type(idx_type)} {llvm_value(idx, aliases)}")
+            else:
+                indices.append(f"i32 {raw}")
+        if dynamic:
+            raise Error("llvm.getelementptr has too many dynamic index operands")
+        index_text = "".join(f", {i}" for i in indices)
+        return [f"  {out_result} = getelementptr{gep_flags(op.attr)} {elem}, ptr {base}{index_text}"]
+
+    raise Error(f"unsupported LLVM operation: {name}")
+
+
 def translate_nonterminator(
     op: Operation,
     aliases: dict[str, str],
@@ -595,6 +718,8 @@ def translate_nonterminator(
     declarations: set[str],
 ) -> list[str]:
     name = op.name
+    if name in MEMORY_OPS:
+        return translate_memory(op, aliases, value_types)
     if name == "llvm.mlir.constant":
         result = require_result(op)
         if op.operands or op.operand_types:
@@ -604,6 +729,14 @@ def translate_nonterminator(
             raise Error("llvm.mlir.constant result type does not match value type")
         aliases[result] = value
         value_types[result] = typ
+        return []
+
+    if name == "llvm.mlir.poison":
+        result = require_result(op)
+        if op.operands or op.operand_types or op.attr:
+            raise Error("llvm.mlir.poison takes no operands or attributes")
+        aliases[result] = "poison"
+        value_types[result] = op.result_types[0]
         return []
 
     result = require_result(op)
