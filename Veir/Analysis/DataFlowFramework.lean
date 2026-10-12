@@ -172,14 +172,11 @@ TODO: Eventually prove via monotonicity that this is in fact impossible.
 -/
 partial def run (analysesMap : AnalysesMap) (ctx : DataFlowContext)
     (irCtx : WfIRContext OpCode) : Option DataFlowContext :=
-  -- Take the worklist out of `ctx` before dequeuing, so that it is not shared
-  -- and `dequeue?` can update it in place instead of copying it.
-  let workList := ctx.workList
-  let ctx := { ctx with workList := .empty }
-  match workList.dequeue? with
+  let (workItem?, workList) := ctx.workList.dequeue?
+  let ctx := { ctx with workList }
+  match workItem? with
   | none => some ctx
-  | some ((point, analysisKind), workList) =>
-    let ctx := { ctx with workList := workList }
+  | some (point, analysisKind) =>
     match analysesMap.get? analysisKind with
     | some analysis =>
       let ctx := analysis.visit point ctx irCtx
