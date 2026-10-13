@@ -135,8 +135,9 @@ def memorySize (n : Nat) : Interp UInt64 :=
 def MemoryState.alloc (mem : MemoryState) (size : UInt64) : Interp (MemoryState × Pointer) :=
   let base := mem.nextBase
   if base + size.toNat + 1 > 2 ^ 64 then Interp.fail none else
+  let index := mem.objects.size
   return ({ mem with objects := mem.objects.push ⟨base.toUInt64, size.toNat⟩ },
-    ⟨mem.objects.size, base.toUInt64⟩)
+    ⟨index, base.toUInt64⟩)
 
 /--
   Check if an access of `size` bytes at `p` is allowed.
