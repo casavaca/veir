@@ -82,9 +82,16 @@ def coerceFunction (coercion : BoundaryCoercion) (ctx : WfIRContext OpCode)
     | none =>
       inputs := inputs.push origType.val
   -- (2) Coerce the operands of every return terminator in this function.
-  let returnOps := ctx.raw.operations.keys.filter fun o =>
-    o.getOpType! ctx.raw == returnCode &&
-      o.getParentOp! ctx.raw == some op
+  let mut returnOps : Array OperationPtr := #[]
+  for region in op.getRegions! ctx.raw do
+    let mut block? := region.getFirstBlock! ctx.raw
+    while let some block := block? do
+      let mut inner? := block.getFirstOp! ctx.raw
+      while let some inner := inner? do
+        if inner.getOpType! ctx.raw == returnCode then
+          returnOps := returnOps.push inner
+        inner? := inner.getNextOp! ctx.raw
+      block? := block.getNextBlock! ctx.raw
   for retOp in returnOps do
     for j in List.range (retOp.getNumOperands! ctx.raw) do
       let opVal := retOp.getOperand! ctx.raw j
