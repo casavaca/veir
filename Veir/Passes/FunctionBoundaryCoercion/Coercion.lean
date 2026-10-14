@@ -75,7 +75,7 @@ def coerceFunction (coercion : BoundaryCoercion) (ctx : WfIRContext OpCode)
       let ip := InsertPoint.atStart entry ctx.raw sorry
       let some (ctx', cast) := WfRewriter.createOp ctx
         Builtin.unrealized_conversion_cast #[origType] #[] #[] #[] default (some ip)
-        sorry sorry sorry sorry | return ctx
+        sorry sorry sorry sorry | throw "cannot create a cast for a function argument"
       let ctx' := WfRewriter.replaceValue ctx' bap (cast.getResult 0) sorry sorry sorry
       ctx := WfRewriter.pushOperand ctx' cast bap sorry sorry
       inputs := inputs.push newType.val
@@ -100,7 +100,8 @@ def coerceFunction (coercion : BoundaryCoercion) (ctx : WfIRContext OpCode)
       | some newType =>
         let some (ctx', cast) := WfRewriter.createOp ctx
           Builtin.unrealized_conversion_cast #[newType] #[opVal] #[] #[] default
-          (some (InsertPoint.before retOp)) sorry sorry sorry sorry | return ctx
+          (some (InsertPoint.before retOp)) sorry sorry sorry sorry
+          | throw "cannot create a cast for a return operand"
         ctx := WfRewriter.replaceOperand ctx' ⟨retOp, j⟩ (cast.getResult 0) sorry sorry
         -- The `j`-th operand maps to the `j`-th declared result: the verifier guarantees
         -- a return's operand count equals the function's declared result count.
