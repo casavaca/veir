@@ -109,17 +109,18 @@ def convertBranch (convertible : BlockPtr → Bool) (ctx : WfIRContext OpCode) (
   let ip := InsertPoint.before op
   let operands := (List.range (op.getNumOperands! ctx.raw)).map (op.getOperand! ctx.raw ·)
   let successors := op.getSuccessors! ctx.raw
+  -- Read `ctx` before the casts: any later read makes the first cast copy the whole context.
+  let condProps : LLVMCondBrProperties := op.getProperties! ctx.raw (OpCode.llvm .cond_br)
   let (ctx', casts) ← operands.foldlM (castToReg ip) (ctx, #[])
   let regs := casts.map (fun cast => cast.getResult 0)
 
   let ctx' ←
     if opType = OpCode.llvm .br then do
       let some (ctx', _) := WfRewriter.createOp! ctx' Riscv_Cf.branch #[] regs
-        #[op.getSuccessor! ctx.raw 0] #[] default ip
+        #[successors[0]!] #[] default ip
         | throw "isel-br-riscv64: cannot create riscv_cf.branch"
       pure ctx'
     else do
-      let condProps : LLVMCondBrProperties := op.getProperties! ctx.raw (OpCode.llvm .cond_br)
       let props : RISCVBrProperties := ⟨condProps.operandSegmentSizes⟩
       let some (ctx', _) := WfRewriter.createOp! ctx' Riscv_Cf.bnez #[] regs
         successors #[] props ip
